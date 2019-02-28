@@ -5,7 +5,7 @@ TCP servers can be used for writing command shells or creating a proxy.
 - python 3
 
 ## Download
-- git clone 
+- git clone https://github.com/dcfield/tcp-client-server.git
 
 ## Start your TCP server
 - Open a terminal.
