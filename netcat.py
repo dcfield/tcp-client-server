@@ -13,6 +13,7 @@ target = ""
 upload_destination = ""
 port = 0
 
+
 # function to handle CLI arguments
 def usage():
 
@@ -33,6 +34,7 @@ def usage():
 
     print(explanation)
 
+
 def read_cli_options():
     try:
         opts, args = getopt.getopt(sys.argv[1:], "hle:t:p:cu:",
@@ -43,6 +45,7 @@ def read_cli_options():
         print(str(error))
         usage()
 
+
 def client_sender(buffer):
 
     # AF_INET means IPv4 address
@@ -52,6 +55,7 @@ def client_sender(buffer):
     try:
         # connect to target host
         client.connect((target, port))
+        print("[*] Connected to %s on port %d" % (target, port))
 
         # Test to see if any input from stdin
         if len(buffer):
@@ -68,7 +72,7 @@ def client_sender(buffer):
                 # Max data size of 4096
                 data = client.recv(4096)
                 recv_len = len(data)
-                response += data
+                response += str(data)
 
                 # if we receive less than 4096 bytes, stop receiving
                 if recv_len < 4096:
@@ -80,15 +84,20 @@ def client_sender(buffer):
             buffer = input("")
             buffer += "\n"
 
+            # Convert buffer string to bytes object
+            buffer = buffer.encode()
+
             # send it away
             client.send(buffer)
 
-    except:
-        print("[*] Exception! Exiting")
+    except socket.error as err:
+        print("[*] Exception! Exiting with error: %s" % err)
 
         # tear down the connection
         client.close()
 
+
+# Primary server loop
 def server_loop():
     global target
 
@@ -96,7 +105,103 @@ def server_loop():
     if not len(target):
         target = "0.0.0.0"
 
-    server = socket.socket(socket.AF_INET, )
+    # AF_INET means IPv4 address
+    # SOCK_STREAM means TCP client
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((target, port))
+
+    # Tell with a max number of 5 queued connections
+    server.listen(5)
+
+    while True:
+        # store the client socket and the addr from the server
+        client_socket, addr = server.accept()
+
+        # Create a thread to handle our new client
+        client_thread = threading.Thread(target=client_handler, args=(client_socket,))
+        client_thread.start()
+
+
+# Logic for file uploads, command execution, shell
+def client_handler(client_socket):
+    global upload
+    global execute
+    global command
+
+    # Make sure we can receive a file when we get a connection
+    # Check for an upload
+    if len(upload_destination):
+        # Read in all the bytes and write to the destination
+        file_buffer = ""
+
+        # Keep reading data until none is available
+        while True:
+            data = client_socket.recv(1024)
+
+            if not data:
+                break
+            else:
+                file_buffer += data
+
+        # Write the bytes out
+        try:
+            # wb means we are writing with binary mode enabled so that we can upload a binary executable
+            file_descriptor = open(upload_destination, "wb")
+            file_descriptor.write(file_buffer)
+            file_descriptor.close()
+
+            # Inform user that the file was written
+            client_socket.send("Successfully saved file to %s\r\n" % upload_destination)
+
+        except:
+            client_socket.send("Failed to write the file to %s\r\n" % upload_destination)
+
+    # Check for command line execution
+    if len(execute):
+        # Run the command
+        output = run_command(execute)
+
+        client_socket.send(output)
+
+    # If a command shell was requested, go to another loop
+    if command:
+
+        while True:
+            client_socket.send(b"hello")
+            # Show a prompt
+            client_socket.send(b"<BHP:#> ")
+
+            # Keep receiving until we receive a line
+            cmd_buffer = ""
+
+            while '\n' not in cmd_buffer:
+                print("Received the command %s" % cmd_buffer)
+                cmd_buffer += str(client_socket.recv(1024))
+
+            # Run the command
+            response = run_command(cmd_buffer)
+            print("Your command is %s" % cmd_buffer)
+
+            # Send back the response
+            client_socket.send(response)
+
+
+# Stub function to handle comment execution and full command shell
+def run_command(command):
+    # Trim the newline
+    command = command.rstrip()
+
+    print("[*] Running the command %s" % command)
+
+    # Run whatever the command we pass in and see what the output is
+    try:
+        output = subprocess.check_output(command, stderr=subprocess.STDOUT, shell=True)
+    except:
+        output = "Failed to execute command\r\n"
+
+    # Send output back to client
+    return output
+
 
 
 def main():
@@ -126,6 +231,8 @@ def main():
             upload_destination
         elif o in ("-t", "--target"):
             target = a
+        elif o in ("-p", "--port"):
+            port = int(a)
         else:
             assert False, "Unhandled Option"
 
